@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Face Swap Studio</title>
+  <style>
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #3b82f6;
+      --text: #f8fafc;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      background-color: var(--bg-color);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      margin-bottom: 5px;
+      font-size: 1.8rem;
+    }
+
+    p.subtitle {
+      color: #94a3b8;
+      margin-top: 0;
+      margin-bottom: 20px;
+      font-size: 0.95rem;
+    }
+
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+      max-width: 1200px;
+      width: 100%;
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+      min-width: 320px;
+    }
+
+    .view-box {
+      width: 100%;
+      height: 380px;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    video, canvas, img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    #webcamVideo {
+      display: none; /* Hide raw webcam video; canvas renders swapped output */
+    }
+
+    .controls {
+      margin-top: 15px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .btn {
+      background-color: var(--accent);
+      color: white;
+      padding: 10px 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      text-align: center;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background-color: #2563eb;
+    }
+
+    .status-badge {
+      margin-top: 10px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: #334155;
+      font-size: 0.85rem;
+    }
+
+    .active {
+      background: #166534;
+      color: #4ade80;
+    }
+  </style>
+
+  <!-- Load TensorFlow.js and MediaPipe Face Landmarks -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection"></script>
+</head>
+<body>
+
+  <h1>Live Stream Face Swap Studio</h1>
+  <p class="subtitle">Client-Side Mesh Alignment & Real-Time Track Renderer</p>
+
+  <div class="container">
+    <!-- Panel 1: Target Image Upload -->
+    <div class="panel">
+      <h3>1. Target Mask / Character</h3>
+      <div class="view-box">
+        <img id="targetPreview" src="" alt="Upload target face" style="display:none;">
+        <span id="uploadPlaceholder" style="color: #64748b;">No target image uploaded</span>
+      </div>
+      <div class="controls">
+        <label for="imageLoader" class="btn">Select Target Photo</label>
+        <input type="file" id="imageLoader" accept="image/*">
+        <div id="targetStatus" class="status-badge">Target Status: Idle</div>
+      </div>
+    </div>
+
+    <!-- Panel 2: Live Stream Output -->
+    <div class="panel">
+      <h3>2. Swapped Camera Output</h3>
+      <div class="view-box">
+        <video id="webcamVideo" autoplay playsinline muted></video>
+        <canvas id="outputCanvas"></canvas>
+      </div>
+      <div class="controls">
+        <button id="startCamBtn" class="btn">Grant Camera Access</button>
+        <div id="camStatus" class="status-badge">Camera: Offline</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let detector;
+    let targetMeshPoints = null;
+    let targetImage = null;
+
+    const videoElement = document.getElementById('webcamVideo');
+    const canvasElement = document.getElementById('outputCanvas');
+    const ctx = canvasElement.getContext('2d');
+    const imageLoader = document.getElementById('imageLoader');
+    const targetPreview = document.getElementById('targetPreview');
+    const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+    const startCamBtn = document.getElementById('startCamBtn');
+
+    // Initialize Face Detector
+    async function initDetector() {
+      const model = faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh;
+      const detectorConfig = {
+        runtime: 'tfjs',
+        refineLandmarks: true,
+        maxFaces: 1
+      };
+      detector = await faceLandmarksDetection.createDetector(model, detectorConfig);
+      console.log("Face Mesh Detector Loaded");
+    }
+    initDetector();
+
+    // Target Image Processing
+    imageLoader.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        targetImage = new Image();
+        targetImage.onload = async () => {
+          targetPreview.src = targetImage.src;
+          targetPreview.style.display = 'block';
+          uploadPlaceholder.style.display = 'none';
+
+          // Extract face mesh keypoints from the target image
+          if (detector) {
+            document.getElementById('targetStatus').innerText = "Analyzing target face...";
+            const faces = await detector.estimateFaces(targetImage);
+            if (faces.length > 0) {
+              targetMeshPoints = faces[0].keypoints;
+              document.getElementById('targetStatus').innerText = "Target Face Ready";
+              document.getElementById('targetStatus').classList.add('active');
+            } else {
+              document.getElementById('targetStatus').innerText = "No face detected in target image";
+            }
+          }
+        };
+        targetImage.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Camera Access & Live Frame Rendering Loop
+    startCamBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 },
+          audio: false
+        });
+        videoElement.srcObject = stream;
+        videoElement.onloadedmetadata = () => {
+          videoElement.play();
+          canvasElement.width = videoElement.videoWidth;
+          canvasElement.height = videoElement.videoHeight;
+          document.getElementById('camStatus').innerText = "Camera: Active";
+          document.getElementById('camStatus').classList.add('active');
+          renderLoop();
+        };
+      } catch (err) {
+        alert("Camera permission denied or device not supported.");
+      }
+    });
+
+    // Affine Warp Triangle Utility (Smooth Texture Mapping)
+    function drawTriangle(ctx, img, srcTri, dstTri) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(dstTri[0].x, dstTri[0].y);
+      ctx.lineTo(dstTri[1].x, dstTri[1].y);
+      ctx.lineTo(dstTri[2].x, dstTri[2].y);
+      ctx.closePath();
+      ctx.clip();
+
+      const x0 = dstTri[0].x, y0 = dstTri[0].y;
+      const x1 = dstTri[1].x, y1 = dstTri[1].y;
+      const x2 = dstTri[2].x, y2 = dstTri[2].y;
+
+      const u0 = srcTri[0].x, v0 = srcTri[0].y;
+      const u1 = srcTri[1].x, v1 = srcTri[1].y;
+      const u2 = srcTri[2].x, v2 = srcTri[2].y;
+
+      const delta = u0 * (v1 - v2) - v0 * (u1 - u2) + (u1 * v2 - u2 * v1);
+      if (Math.abs(delta) < 0.001) {
+        ctx.restore();
+        return;
+      }
+
+      const deltaX = x0 * (v1 - v2) - v0 * (x1 - x2) + (x1 * v2 - x2 * v1);
+      const deltaY = u0 * (y1 - y2) - y0 * (u1 - u2) + (u1 * y2 - u2 * y1);
+
+      const a = (x0 * (v1 - v2) + x1 * (v2 - v0) + x2 * (v0 - v1)) / delta;
+      const b = (y0 * (v1 - v2) + y1 * (v2 - v0) + y2 * (v0 - v1)) / delta;
+      const c = (u0 * (x1 - x2) + u1 * (x2 - x0) + u2 * (x0 - x1)) / delta;
+      const d = (u0 * (y1 - y2) + u1 * (y2 - y0) + u2 * (y0 - y1)) / delta;
+      const e = (x0 * (u1 * v2 - u2 * v1) + x1 * (u2 * v0 - u0 * v2) + x2 * (u0 * v1 - u1 * v0)) / delta;
+      const f = (y0 * (u1 * v2 - u2 * v1) + y1 * (u2 * v0 - u0 * v2) + y2 * (u0 * v1 - u1 * v0)) / delta;
+
+      ctx.transform(a, d, b, c, e, f);
+      ctx.drawImage(img, 0, 0);
+      ctx.restore();
+    }
+
+    // Main Detection and Face Swap Loop
+    async function renderLoop() {
+      // Draw background stream frame
+      ctx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (detector && targetMeshPoints && targetImage) {
+        const webcamFaces = await detector.estimateFaces(videoElement);
+        if (webcamFaces.length > 0) {
+          const liveMeshPoints = webcamFaces[0].keypoints;
+
+          // Process triangulation matching (simple tri-grid sample across face keypoints)
+          for (let i = 0; i < liveMeshPoints.length - 15; i += 3) {
+            const srcTri = [targetMeshPoints[i], targetMeshPoints[i+1], targetMeshPoints[i+2]];
+            const dstTri = [liveMeshPoints[i], liveMeshPoints[i+1], liveMeshPoints[i+2]];
+
+            if (srcTri[0] && srcTri[1] && srcTri[2] && dstTri[0] && dstTri[1] && dstTri[2]) {
+              drawTriangle(ctx, targetImage, srcTri, dstTri);
+            }
+          }
+        }
+      }
+
+      requestAnimationFrame(renderLoop);
+    }
+  </script>
+</body>
+</html>
