@@ -1,0 +1,9 @@
+export function createHud(){
+ const $=id=>document.getElementById(id),overlay=$('overlay'),title=$('overlay-title'),copy=$('overlay-copy'),play=$('play');let buyOpen=false;
+ const set=(id,v)=>{if($(id))$(id).textContent=String(v);};
+ function showOverlay(mode,message=''){title.textContent=mode==='menu'?'MERIDIAN // CONTRACT':mode==='paused'?'FIELD PAUSED':mode==='roundover'?'ROUND REPORT':mode==='matchover'?'CONTRACT COMPLETE':'FIELD PAUSED';copy.textContent=message;play.textContent=mode==='menu'?'DEPLOY':mode==='roundover'?'NEXT ROUND':mode==='matchover'?'NEW CONTRACT':'RESUME';overlay.hidden=false;}
+ function hideOverlay(){overlay.hidden=true;}
+ function notice(message){set('notice',message);$('notice').classList.add('show');clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').classList.remove('show'),2100);}
+ function toggleBuy(){buyOpen=!buyOpen;$('buy-panel').hidden=!buyOpen;}
+ return {setAmmo(m,r){set('ammo-mag',m);set('ammo-reserve',`/ ${r}`);},setScore(v){set('score-value',v);},setHealth(h,a){set('health-value',Math.ceil(h));set('armor-value',Math.ceil(a));$('health-fill').style.width=`${h}%`;},setTimer(v){set('timer',v);},setTeams(b,r){set('blue-alive',b);set('red-alive',r);},setMoney(v){set('credits',Math.floor(v).toLocaleString());},setWeapon(v){set('weapon-name',v);},setObjective(v){set('objective',v);},setPhase(p,r,b,red,m){set('round-label',`ROUND ${r} · BEST OF 13`);set('blue-score',b);set('red-score',red);set('credits',m);},notice,hitMarker(killed){$('hitmarker').classList.add('on');$('hitmarker').classList.toggle('kill',killed);setTimeout(()=>$('hitmarker').classList.remove('on','kill'),150);},showOverlay,hideOverlay,toggleBuy,onPlay(fn){play.addEventListener('click',fn);},onBuy(fn){document.querySelectorAll('[data-buy]').forEach(b=>b.addEventListener('click',()=>{fn(b.dataset.buy);buyOpen=false;$('buy-panel').hidden=true;}));},onDefuse(fn){$('defuse').addEventListener('click',fn);}};
+}
